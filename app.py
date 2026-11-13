@@ -4,91 +4,108 @@ from flask import Flask, request, jsonify
 from google import genai
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Gemini-API-Key"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
 
-@app.route('/', methods=['GET'])
+@app.route("/", methods=["GET"])
 def health_check():
     return jsonify({
         "status": "online",
-        "message": "Khmer AI Translator Backend is running successfully!",
-        "gemini_configured": client is not None
+        "message": "Khmer AI Translator Backend is running."
     }), 200
 
-@app.route('/translate-video', methods=['POST'])
+@app.route("/translate-video", methods=["POST", "OPTIONS"])
 def translate_video():
-    if not client:
-        return jsonify({"success": False, "error": "Gemini API Key is missing on the server backend."}), 500
-    
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    api_key = request.headers.get("X-Gemini-API-Key") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return jsonify({
+            "success": False,
+            "error": "សូមបញ្ចូល Gemini API Key ក្នុងកម្មវិធីជាមុន។"
+        }), 401
+
     temp_vid_path = None
     uploaded_file = None
-    
+    client = None
+
     try:
-        video_file = request.files.get('video')
-        data = request.get_json(silent=True) or {}
-        video_url = data.get('video_url')
-
-        if not video_file and not video_url:
-            return jsonify({"success": False, "error": "សូមបញ្ជូន File វីដេអូ ឬ Video URL មកជាមួយ។"}), 400
-
-        if video_file:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_vid:
-                video_file.save(temp_vid.name)
-                temp_vid_path = temp_vid.name
-
-            uploaded_file = client.files.upload(file=temp_vid_path)
-
-            prompt = (
-                "សូមស្តាប់វីដេអូនេះ បកប្រែអត្ថន័យជាភាសាខ្មែរ និងបង្កើតជាទម្រង់អត្ថបទរង SRT "
-                "(មានម៉ោងចាប់ផ្តើម និងបញ្ចប់ ព្រមទាំងអត្ថបទបកប្រែជាភាសាខ្មែរ)។"
-            )
-            
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=[uploaded_file, prompt]
-            )
-
-            result_text = response.text if response and hasattr(response, 'text') else "មិនមានលទ្ធផលត្រឡប់មកវិញទេ។"
-
+        video_file = request.files.get("video")
+        if not video_file:
             return jsonify({
-                "success": True,
-                "translation_result": result_text
-            }), 200
+                "success": False,
+                "error": "សូមជ្រើសរើសវីដេអូជាមុន។"
+            }), 400
 
-        elif video_url:
-            prompt = (
-                f"សូមវិភាគ និងបកប្រែវីដេអូពីតំណភ្ជាប់នេះ (URL: {video_url}) ទៅជាភាសាខ្មែរ "
-                "ព្រមទាំងបង្កើតជាទម្រង់ SRT Subtitle ជូនខ្ញុំផង។"
-            )
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
-            )
-            
-            result_text = response.text if response and hasattr(response, 'text') else "មិនមានលទ្ធផលត្រឡប់មកវិញទេ។"
-            
-            return jsonify({
-                "success": True,
-                "translation_result": result_text
-            }), 200
+        source_language = request.form.get("source_language", "auto")
+        client = genai.Client(api_key=api_key)
 
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        suffix = os.path.splitext(video_file.filename or "")[1] or ".mp4"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_vid:
+            video_file.save(temp_vid.name)
+            temp_vid_path = temp_vid.name
+
+        uploaded_file = client.files.upload(file=temp_vid_path)
+        language_names = {
+            "en": "English", "th": "Thai", "zh": "Chinese",
+            "ko": "Korean", "ja": "Japanese", "vi": "Vietnamese",
+            "fr": "French", "lo": "Lao", "id": "Indonesian",
+            "auto": "the language spoken in the video"
+        }
+        source_name = language_names.get(source_language, "the language spoken in the video")
+        prompt = (
+            f"Listen carefully to the speech in this video. The spoken language is {source_name}. "
+            "Transcribe the speech and translate it into natural, accurate Khmer. "
+            "Return the result as valid SubRip SRT only: sequential subtitle numbers, "
+            "timestamps in HH:MM:SS,mmm --> HH:MM:SS,mmm format, and Khmer subtitle text. "
+            "Keep subtitle segments short and synchronize timestamps to the speech. "
+            "Do not add explanations or markdown fences. If there is no speech, say so in Khmer."
+        )
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[uploaded_file, prompt]
+        )
+        result_text = response.text if response and response.text else "មិនមានលទ្ធផលត្រឡប់មកវិញទេ។"
+
+        return jsonify({
+            "success": True,
+            "translation_result": result_text
+        }), 200
+
+    except Exception:
+        app.logger.exception("Video translation failed")
+        return jsonify({
+            "success": False,
+            "error": "ដំណើរការមិនបានសម្រេចទេ។ សូមពិនិត្យ API Key អ៊ីនធឺណិត និងទំហំវីដេអូ រួចសាកល្បងម្ដងទៀត។"
+        }), 500
 
     finally:
         if temp_vid_path and os.path.exists(temp_vid_path):
             try:
                 os.unlink(temp_vid_path)
-            except Exception:
+            except OSError:
                 pass
         if uploaded_file and client:
             try:
                 client.files.delete(name=uploaded_file.name)
             except Exception:
-                pass
+                app.logger.warning("Could not delete temporary Gemini upload")
 
-if __name__ == '__main__':
+@app.errorhandler(413)
+def file_too_large(_error):
+    return jsonify({
+        "success": False,
+        "error": "វីដេអូធំពេក។ សូមជ្រើសរើសវីដេអូតូចជាង 100 MB។"
+    }), 413
+
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
-              
+    app.run(host="0.0.0.0", port=port)
