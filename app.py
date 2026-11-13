@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 from flask import Flask, request, jsonify
 from google import genai
 
@@ -53,6 +54,17 @@ def translate_video():
             temp_vid_path = temp_vid.name
 
         uploaded_file = client.files.upload(file=temp_vid_path)
+        # Gemini may need time to process uploaded video before it can analyze it.
+        for _ in range(60):
+            uploaded_file = client.files.get(name=uploaded_file.name)
+            state = str(getattr(uploaded_file, "state", "")).upper()
+            if state.endswith("ACTIVE"):
+                break
+            if state.endswith("FAILED"):
+                raise RuntimeError("Gemini could not process this video file.")
+            time.sleep(2)
+        else:
+            raise TimeoutError("Video processing took too long. Please try a shorter video.")
         language_names = {
             "en": "English", "th": "Thai", "zh": "Chinese",
             "ko": "Korean", "ja": "Japanese", "vi": "Vietnamese",
