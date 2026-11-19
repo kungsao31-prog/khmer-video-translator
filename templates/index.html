@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="km">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101827"><title>CN-KH AI · Chinese to Khmer</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#131f32;--line:#26364d;--text:#eef4ff;--muted:#9fb0c7;--blue:#3b82f6;--green:#16a36a}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(150deg,#101d32,#080e19 65%);font-family:system-ui,-apple-system,"Noto Sans Khmer",sans-serif;color:var(--text);min-height:100vh;padding:24px 14px}
+main{max-width:760px;margin:auto}.brand{text-align:center;margin:10px 0 22px}.brand h1{font-size:clamp(25px,5vw,36px);margin:0}.brand p{color:var(--muted);margin:7px 0}
+.card{background:rgba(19,31,50,.96);border:1px solid var(--line);border-radius:18px;padding:20px;margin:14px 0;box-shadow:0 14px 36px #0003}
+h2{font-size:18px;margin:0 0 14px}.field{display:block;width:100%;margin-top:8px;padding:13px;border:1px solid #354760;border-radius:11px;background:#0b1423;color:var(--text);font:inherit}
+input[type=file]{padding:12px}.hint{font-size:13px;color:var(--muted);line-height:1.6}.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:180px}
+button,.download{display:inline-flex;justify-content:center;align-items:center;border:0;border-radius:11px;padding:13px 18px;background:var(--blue);color:white;font-weight:700;font:inherit;text-decoration:none;cursor:pointer;width:100%;margin-top:14px}
+button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26364d}.progress{height:12px;background:#091321;border-radius:20px;overflow:hidden;margin:12px 0}.bar{height:100%;width:0;background:linear-gradient(90deg,#3b82f6,#25c58a);transition:width .3s}
+.status{color:#b9c9dd;min-height:24px;font-size:14px}.result{white-space:pre-wrap;background:#0a1422;border:1px solid var(--line);padding:14px;border-radius:12px;max-height:360px;overflow:auto;line-height:1.8}
+.error{color:#ff9b9b}.success{color:#7be0ad}audio{width:100%;margin-top:12px}label{font-weight:600;font-size:14px}
+@media(max-width:520px){body{padding:14px 10px}.card{padding:16px}.row>*{min-width:100%}}
+</style></head>
+<body><main>
+<header class="brand"><h1>🇨🇳 CN-KH AI 🇰🇭</h1><p>កម្មវិធីបកប្រែវីដេអូចិនទៅខ្មែរ</p><p>Chinese → Khmer Video Translation</p></header>
+<section class="card">
+<h2>🎬 ១. ជ្រើសរើសវីដេអូ</h2>
+<input class="field" id="video" type="file" accept="video/mp4,video/quicktime,video/webm,video/*">
+<p class="hint" id="fileInfo">គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 100 MB</p>
+</section>
+<section class="card">
+<h2>🔑 ២. Gemini API Key</h2>
+<input class="field" id="apiKey" type="password" autocomplete="off" placeholder="បញ្ចូល Gemini API Key របស់អ្នក">
+<p class="hint">API Key ត្រូវបានប្រើសម្រាប់សំណើបកប្រែប៉ុណ្ណោះ។ កុំចែករំលែក Key ជាមួយអ្នកដទៃ។</p>
+<label for="language">ភាសាដើម</label>
+<select class="field" id="language"><option value="zh">ចិន (Chinese)</option><option value="auto">ស្វ័យប្រវត្តិ</option><option value="en">អង់គ្លេស</option><option value="th">ថៃ</option><option value="ko">កូរ៉េ</option><option value="ja">ជប៉ុន</option><option value="vi">វៀតណាម</option></select>
+<button id="start">🚀 ៣. ចាប់ផ្តើមបកប្រែវីដេអូ</button>
+<div class="progress"><div class="bar" id="bar"></div></div><div class="status" id="status">រង់ចាំជ្រើសរើសវីដេអូ...</div>
+</section>
+<section class="card">
+<h2>🇰🇭 ៤. លទ្ធផលបកប្រែខ្មែរ</h2>
+<div class="result" id="result">លទ្ធផលបកប្រែនឹងបង្ហាញនៅទីនេះ...</div>
+<audio id="player" controls hidden></audio>
+<a id="download" class="download" hidden>⬇️ ទាញយកសំឡេងខ្មែរ MP3</a>
+</section>
+<section class="card">
+<h2>📝 ៥. បកប្រែអត្ថបទចិន</h2>
+<textarea id="sourceText" class="field" rows="4" placeholder="បញ្ចូលអត្ថបទភាសាចិននៅទីនេះ..."></textarea>
+<button id="translateText" class="secondary">បកប្រែទៅខ្មែរ</button>
+<div class="result" id="textResult" style="margin-top:12px">លទ្ធផលបកប្រែ...</div>
+</section>
+<p class="hint" style="text-align:center">CN-KH AI · សេវាកម្មបកប្រែវីដេអូ</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let pollTimer=null;
+$("video").addEventListener("change",()=>{const f=$("video").files[0];$("fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 100 MB";});
+function progress(n,msg,cls=""){ $("bar").style.width=Math.max(0,Math.min(100,n))+"%";$("status").textContent=msg;$("status").className="status "+cls; }
+$("start").addEventListener("click",()=>{
+ const file=$("video").files[0],key=$("apiKey").value.trim();
+ if(!file){progress(0,"សូមជ្រើសរើសវីដេអូជាមុន។","error");return;}
+ if(!key){progress(0,"សូមបញ្ចូល Gemini API Key ជាមុន។","error");return;}
+ if(file.size>100*1024*1024){progress(0,"វីដេអូធំពេក។ អតិបរមា 100 MB។","error");return;}
+ if(pollTimer)clearInterval(pollTimer);
+ $("start").disabled=true;$("result").textContent="កំពុងផ្ញើវីដេអូទៅ Server...";$("player").hidden=true;$("download").hidden=true;
+ const data=new FormData();data.append("video",file);data.append("api_key",key);data.append("source_language",$("language").value);
+ const xhr=new XMLHttpRequest();xhr.open("POST","/api/jobs");
+ xhr.upload.onprogress=e=>{if(e.lengthComputable)progress(Math.round(e.loaded/e.total*20),"កំពុងផ្ញើវីដេអូ... "+Math.round(e.loaded/e.total*100)+"%");};
+ xhr.onload=()=>{let d={};try{d=JSON.parse(xhr.responseText)}catch(e){}
+  if(xhr.status!==202){progress(0,d.error||"មិនអាចបញ្ជូនវីដេអូបានទេ។","error");$("start").disabled=false;return;}
+  progress(22,"ទទួលបានវីដេអូ។ កំពុងចាប់ផ្តើម AI...");pollTimer=setInterval(()=>checkJob(d.job_id),2500);
+ };
+ xhr.onerror=()=>{progress(0,"មិនអាចភ្ជាប់ Server បានទេ។ សូមពិនិត្យអ៊ីនធឺណិត។","error");$("start").disabled=false;};
+ xhr.send(data);
+});
+async function checkJob(id){try{const r=await fetch("/api/jobs/"+id);const d=await r.json();progress(d.progress||0,d.message||"កំពុងដំណើរការ...");
+ if(d.status==="completed"){clearInterval(pollTimer);$("start").disabled=false;$("result").textContent=d.translation_result||d.transcript;const url=d.audio_url;$("player").src=url;$("player").hidden=false;$("download").href=url;$("download").hidden=false;progress(100,"បកប្រែរួចរាល់! អាចស្តាប់ ឬទាញយក MP3 បាន។","success");}
+ if(d.status==="failed"){clearInterval(pollTimer);$("start").disabled=false;$("result").textContent=d.error||"មានបញ្ហាក្នុងដំណើរការ";progress(0,d.error||"បកប្រែមិនបានជោគជ័យ","error");}
+ }catch(e){progress(0,"បាត់ការភ្ជាប់ទៅ Server។ សូមសាកល្បងម្ដងទៀត។","error");clearInterval(pollTimer);$("start").disabled=false;}}
+$("translateText").addEventListener("click",async()=>{const text=$("sourceText").value.trim(),key=$("apiKey").value.trim();if(!text||!key){$("textResult").textContent="សូមបញ្ចូលអត្ថបទចិន និង Gemini API Key។";return;}
+ $("translateText").disabled=true;$("textResult").textContent="កំពុងបកប្រែ...";
+ try{const r=await fetch("/api/translate-text",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,api_key:key})});const d=await r.json();$("textResult").textContent=r.ok?d.translation:(d.error||"បកប្រែមិនបានជោគជ័យ");}
+ catch(e){$("textResult").textContent="មិនអាចភ្ជាប់ Server បានទេ។";}finally{$("translateText").disabled=false;}
+});
+</script></body></html>
