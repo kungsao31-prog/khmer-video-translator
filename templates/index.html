@@ -21,7 +21,7 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26364d}.pro
 <section class="card">
 <h2>🎬 ១. ជ្រើសរើសវីដេអូ</h2>
 <input class="field" id="video" type="file" accept="video/mp4,video/quicktime,video/webm,video/*">
-<p class="hint" id="fileInfo">គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 100 MB</p>
+<p class="hint" id="fileInfo">គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 500 MB</p>
 </section>
 <section class="card">
 <h2>🔑 ២. Gemini API Key</h2>
@@ -51,13 +51,13 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26364d}.pro
 <script>
 const $=id=>document.getElementById(id);
 let pollTimer=null;
-$("video").addEventListener("change",()=>{const f=$("video").files[0];$("fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 100 MB";});
+$("video").addEventListener("change",()=>{const f=$("video").files[0];$("fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 500 MB";});
 function progress(n,msg,cls=""){ $("bar").style.width=Math.max(0,Math.min(100,n))+"%";$("status").textContent=msg;$("status").className="status "+cls; }
 $("start").addEventListener("click",()=>{
  const file=$("video").files[0],key=$("apiKey").value.trim();
  if(!file){progress(0,"សូមជ្រើសរើសវីដេអូជាមុន។","error");return;}
  if(!key){progress(0,"សូមបញ្ចូល Gemini API Key ជាមុន។","error");return;}
- if(file.size>100*1024*1024){progress(0,"វីដេអូធំពេក។ អតិបរមា 100 MB។","error");return;}
+ if(file.size>500*1024*1024){progress(0,"វីដេអូធំពេក។ អតិបរមា 500 MB។","error");return;}
  if(pollTimer)clearInterval(pollTimer);
  $("start").disabled=true;$("result").textContent="កំពុងផ្ញើវីដេអូទៅ Server...";$("player").hidden=true;$("download").hidden=true;$("videoDownload").hidden=true;
  const data=new FormData();data.append("video",file);data.append("api_key",key);data.append("source_language",$("language").value);
