@@ -45,9 +45,8 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26364d}.pro
 <section class="card">
 <h2>🇰🇭 ៤. លទ្ធផលបកប្រែខ្មែរ</h2>
 <div class="result" id="result">លទ្ធផលបកប្រែនឹងបង្ហាញនៅទីនេះ...</div>
-<audio id="player" controls hidden></audio>
-<a id="download" class="download" hidden>⬇️ ទាញយកសំឡេងខ្មែរ MP3</a>
-<a id="videoDownload" class="download" hidden style="background:#16845b">🎬 ទាញយកវីដេអូថ្មី MP4 (អក្សរខ្មែរ + សំឡេងខ្មែរ)</a>
+<video id="videoPlayer" controls playsinline hidden style="width:100%;max-height:420px;border-radius:12px;background:#000;margin-top:12px"></video>
+<a id="videoDownload" class="download" hidden style="background:#16845b">🎬 មើល និងទាញយកវីដេអូបកប្រែ MP4 (សំឡេងខ្មែរ + អក្សរខ្មែរ)</a>
 <p class="hint">កម្មវិធីនឹងពិនិត្យអក្សរចិនដែលបង្ហាញលើវីដេអូ បិទដោយផ្ទាំងខ្មៅ និងដាក់អក្សរខ្មែរជំនួស។</p>
 </section>
 <section class="card">
@@ -99,7 +98,7 @@ $("start").addEventListener("click",()=>{
  xhr.send(data);
 });
 async function checkJob(id){try{const r=await fetch("/api/jobs/"+id);const d=await r.json();progress(d.progress||0,d.message||"កំពុងដំណើរការ...");
- if(d.status==="completed"){clearInterval(pollTimer);$("start").disabled=false;$("result").textContent=d.translation_result||d.transcript;const url=d.audio_url;$("player").src=url;$("player").hidden=false;$("download").href=url;$("download").hidden=false;$("videoDownload").href=d.video_url||("/api/jobs/"+id+"/video");$("videoDownload").hidden=false;progress(100,d.message||"បកប្រែរួចរាល់!","success");}
+ if(d.status==="completed"){clearInterval(pollTimer);$("start").disabled=false;$("result").textContent=d.translation_result||d.transcript;const videoUrl=d.video_url||("/api/jobs/"+id+"/video");$("videoPlayer").src=videoUrl;$("videoPlayer").hidden=false;$("videoDownload").href=videoUrl;$("videoDownload").hidden=false;progress(100,d.message||"បកប្រែរួចរាល់!","success");}
  if(d.status==="failed"){clearInterval(pollTimer);$("start").disabled=false;$("result").textContent=d.error||"មានបញ្ហាក្នុងដំណើរការ";progress(0,d.error||"បកប្រែមិនបានជោគជ័យ","error");}
  }catch(e){progress(0,"បាត់ការភ្ជាប់ទៅ Server។ សូមសាកល្បងម្ដងទៀត។","error");clearInterval(pollTimer);$("start").disabled=false;}}
 $("translateText").addEventListener("click",async()=>{const text=$("sourceText").value.trim(),key=$("apiKey").value.trim();if(!text||!key){$("textResult").textContent="សូមបញ្ចូលអត្ថបទចិន និង Gemini API Key។";return;}
