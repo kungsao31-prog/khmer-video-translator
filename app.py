@@ -330,7 +330,7 @@ def translate_text():
 
 @app.errorhandler(413)
 def too_large(_):
-    return jsonify({"error": "វីដេអូធំពេក។ អតិបរមា 100 MB។"}), 413
+    return jsonify({"error": "វីដេអូធំពេក។ អតិបរមា 500 MB។"}), 413
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
