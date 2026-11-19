@@ -33,7 +33,12 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26364d}.pro
 <div><label for="maleVoice">សំឡេងតួអង្គប្រុស</label><select class="field" id="maleVoice"><option>Chanda</option><option>Bora</option><option>Arun</option><option>Maly</option></select></div>
 <div><label for="femaleVoice">សំឡេងតួអង្គស្រី</label><select class="field" id="femaleVoice"><option>Maly</option><option>Chanda</option><option>Bora</option><option>Arun</option></select></div>
 </div>
+<div class="row">
+<button type="button" id="refreshVoices" class="secondary">↻ ផ្ទុកសំឡេង Kiri ឡើងវិញ</button>
+<a class="download secondary" href="https://www.kiritts.com/" target="_blank" rel="noopener">🎙️ បើក Kiri ដើម្បីបង្កើតសំឡេងក្លូន</a>
+</div>
 <p class="hint" id="voiceInfo">កំពុងទាញយកបញ្ជីសំឡេង Kiri...</p>
+<p class="hint">សំឡេងក្លូន៖ បង្កើតក្នុងគណនី Kiri របស់អ្នកដោយប្រើសំឡេងដែលអ្នកជាម្ចាស់ ឬមានការអនុញ្ញាត។ បន្ទាប់មកចុច “ផ្ទុកសំឡេង Kiri ឡើងវិញ” ដើម្បីជ្រើសរើសសំឡេងនោះ។ API Key រក្សាទុកតែក្នុង Render ប៉ុណ្ណោះ។</p>
 <button id="start">🚀 ៣. ចាប់ផ្តើមបកប្រែវីដេអូ</button>
 <div class="progress"><div class="bar" id="bar"></div></div><div class="status" id="status">រង់ចាំជ្រើសរើសវីដេអូ...</div>
 </section>
@@ -70,6 +75,7 @@ async function loadKiriVoices(){
   $("voiceInfo").textContent="បានទាញយកសំឡេង Kiri "+voices.length+" សំឡេង រួមទាំងសំឡេងក្លូនដែលមានសិទ្ធិប្រើ។";
  }catch(e){$("voiceInfo").textContent="មិនអាចផ្ទុកបញ្ជីសំឡេង Kiri បានទេ។ អាចប្រើ Chanda និង Maly ជាលំនាំដើម។ "+e.message;}
 }
+$("refreshVoices").addEventListener("click",loadKiriVoices);
 loadKiriVoices();
 $("video").addEventListener("change",()=>{const f=$("video").files[0];$("fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 500 MB";});
 function progress(n,msg,cls=""){ $("bar").style.width=Math.max(0,Math.min(100,n))+"%";$("status").textContent=msg;$("status").className="status "+cls; }
