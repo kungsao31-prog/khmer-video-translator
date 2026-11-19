@@ -15,6 +15,7 @@ JOBS = {}
 LOCK = threading.Lock()
 OUTPUT_DIR = Path(tempfile.gettempdir()) / "cnkh_jobs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
 LANGUAGES = {
     "auto": "the language spoken in the video",
@@ -67,7 +68,7 @@ def process_video(job_id, video_path, api_key, source_language):
             "Do not include markdown fences or explanations."
         )
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_MODEL,
             contents=[uploaded, prompt]
         )
         srt = (response.text or "").strip()
@@ -79,7 +80,6 @@ def process_video(job_id, video_path, api_key, source_language):
 
         update_job(job_id, progress=72, message="បង្កើតសំឡេងនិយាយភាសាខ្មែរ...")
         audio_path = OUTPUT_DIR / f"{job_id}.mp3"
-        # gTTS supports Khmer (km); output is an MP3 narration of the translated dialogue.
         gTTS(text=transcript, lang="km", slow=False).save(str(audio_path))
         update_job(job_id, progress=100, status="completed",
                    message="បកប្រែ និងបង្កើតសំឡេងខ្មែររួចរាល់។",
@@ -107,7 +107,7 @@ def home():
 
 @app.get("/health")
 def health():
-    return jsonify({"status": "online", "app": "CN-KH AI", "time": datetime.now(timezone.utc).isoformat()})
+    return jsonify({"status": "online", "app": "CN-KH AI", "model": GEMINI_MODEL, "time": datetime.now(timezone.utc).isoformat()})
 
 @app.post("/api/jobs")
 def create_job():
@@ -156,7 +156,7 @@ def translate_text():
     try:
         client = genai.Client(api_key=api_key)
         result = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_MODEL,
             contents=f"Translate the following text into natural Khmer. Return only the Khmer translation:\n\n{text}"
         )
         return jsonify({"translation": result.text or ""})
