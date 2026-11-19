@@ -1,123 +1,172 @@
-import os
-import tempfile
-import time
-from flask import Flask, request, jsonify
+import os, re, tempfile, threading, uuid, logging
+from datetime import datetime, timezone
+from pathlib import Path
+
+from flask import Flask, request, jsonify, send_file, render_template
 from google import genai
+from gtts import gTTS
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+app.config["JSON_AS_ASCII"] = False
+logging.basicConfig(level=logging.INFO)
 
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Gemini-API-Key"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return response
+JOBS = {}
+LOCK = threading.Lock()
+OUTPUT_DIR = Path(tempfile.gettempdir()) / "cnkh_jobs"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-@app.route("/", methods=["GET"])
-def health_check():
-    return jsonify({
-        "status": "online",
-        "message": "Khmer AI Translator Backend is running."
-    }), 200
+LANGUAGES = {
+    "auto": "the language spoken in the video",
+    "zh": "Chinese", "en": "English", "th": "Thai", "ko": "Korean",
+    "ja": "Japanese", "vi": "Vietnamese", "lo": "Lao"
+}
 
-@app.route("/translate-video", methods=["POST", "OPTIONS"])
-def translate_video():
-    if request.method == "OPTIONS":
-        return ("", 204)
+def update_job(job_id, **values):
+    with LOCK:
+        if job_id in JOBS:
+            JOBS[job_id].update(values)
 
-    api_key = request.headers.get("X-Gemini-API-Key") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return jsonify({
-            "success": False,
-            "error": "សូមបញ្ចូល Gemini API Key ក្នុងកម្មវិធីជាមុន។"
-        }), 401
+def srt_to_text(srt):
+    lines = []
+    for line in srt.splitlines():
+        value = line.strip()
+        if not value or value.isdigit() or "-->" in value:
+            continue
+        if re.match(r"^\d{2}:\d{2}:\d{2}", value):
+            continue
+        lines.append(value)
+    return " ".join(lines).strip()
 
-    temp_vid_path = None
-    uploaded_file = None
-    client = None
-
+def process_video(job_id, video_path, api_key, source_language):
+    uploaded = None
+    client = genai.Client(api_key=api_key)
     try:
-        video_file = request.files.get("video")
-        if not video_file:
-            return jsonify({
-                "success": False,
-                "error": "សូមជ្រើសរើសវីដេអូជាមុន។"
-            }), 400
-
-        source_language = request.form.get("source_language", "auto")
-        client = genai.Client(api_key=api_key)
-
-        suffix = os.path.splitext(video_file.filename or "")[1] or ".mp4"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_vid:
-            video_file.save(temp_vid.name)
-            temp_vid_path = temp_vid.name
-
-        uploaded_file = client.files.upload(file=temp_vid_path)
-        # Gemini may need time to process uploaded video before it can analyze it.
-        for _ in range(60):
-            uploaded_file = client.files.get(name=uploaded_file.name)
-            state = str(getattr(uploaded_file, "state", "")).upper()
+        update_job(job_id, status="processing", progress=12, message="កំពុងបញ្ជូនវីដេអូទៅ AI...")
+        uploaded = client.files.upload(file=video_path)
+        update_job(job_id, progress=25, message="កំពុងរង់ចាំ AI រៀបចំវីដេអូ...")
+        for _ in range(90):
+            uploaded = client.files.get(name=uploaded.name)
+            state = str(getattr(uploaded, "state", "")).upper()
             if state.endswith("ACTIVE"):
                 break
             if state.endswith("FAILED"):
-                raise RuntimeError("Gemini could not process this video file.")
+                raise RuntimeError("AI មិនអាចដំណើរការវីដេអូនេះបានទេ។")
+            import time
             time.sleep(2)
         else:
-            raise TimeoutError("Video processing took too long. Please try a shorter video.")
-        language_names = {
-            "en": "English", "th": "Thai", "zh": "Chinese",
-            "ko": "Korean", "ja": "Japanese", "vi": "Vietnamese",
-            "fr": "French", "lo": "Lao", "id": "Indonesian",
-            "auto": "the language spoken in the video"
-        }
-        source_name = language_names.get(source_language, "the language spoken in the video")
-        prompt = (
-            f"Listen carefully to the speech in this video. The spoken language is {source_name}. "
-            "Transcribe the speech and translate it into natural, accurate Khmer. "
-            "Return the result as valid SubRip SRT only: sequential subtitle numbers, "
-            "timestamps in HH:MM:SS,mmm --> HH:MM:SS,mmm format, and Khmer subtitle text. "
-            "Keep subtitle segments short and synchronize timestamps to the speech. "
-            "Do not add explanations or markdown fences. If there is no speech, say so in Khmer."
-        )
+            raise TimeoutError("ការរៀបចំវីដេអូចំណាយពេលយូរពេក។ សូមសាកល្បងវីដេអូខ្លីជាងនេះ។")
 
+        update_job(job_id, progress=42, message="កំពុងស្តាប់ និងបកប្រែភាសាចិនទៅខ្មែរ...")
+        source = LANGUAGES.get(source_language, LANGUAGES["auto"])
+        prompt = (
+            f"Listen to the spoken dialogue in this video. The source language is {source}. "
+            "Transcribe and translate every spoken line into natural, faithful Khmer. "
+            "Return ONLY valid SRT subtitles, with sequential numbers and accurate "
+            "HH:MM:SS,mmm timestamps. Keep each subtitle concise and preserve meaning. "
+            "Do not include markdown fences or explanations."
+        )
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=[uploaded_file, prompt]
+            contents=[uploaded, prompt]
         )
-        result_text = response.text if response and response.text else "មិនមានលទ្ធផលត្រឡប់មកវិញទេ។"
+        srt = (response.text or "").strip()
+        if not srt:
+            raise RuntimeError("AI មិនបានផ្តល់អត្ថបទបកប្រែទេ។")
+        transcript = srt_to_text(srt)
+        if not transcript:
+            raise RuntimeError("មិនអាចរកឃើញអត្ថបទបកប្រែសម្រាប់បង្កើតសំឡេងទេ។")
 
-        return jsonify({
-            "success": True,
-            "translation_result": result_text
-        }), 200
-
-    except Exception:
-        app.logger.exception("Video translation failed")
-        return jsonify({
-            "success": False,
-            "error": "ដំណើរការមិនបានសម្រេចទេ។ សូមពិនិត្យ API Key អ៊ីនធឺណិត និងទំហំវីដេអូ រួចសាកល្បងម្ដងទៀត។"
-        }), 500
-
+        update_job(job_id, progress=72, message="បង្កើតសំឡេងនិយាយភាសាខ្មែរ...")
+        audio_path = OUTPUT_DIR / f"{job_id}.mp3"
+        # gTTS supports Khmer (km); output is an MP3 narration of the translated dialogue.
+        gTTS(text=transcript, lang="km", slow=False).save(str(audio_path))
+        update_job(job_id, progress=100, status="completed",
+                   message="បកប្រែ និងបង្កើតសំឡេងខ្មែររួចរាល់។",
+                   translation_result=srt, transcript=transcript,
+                   audio_url=f"/api/jobs/{job_id}/audio")
+    except Exception as exc:
+        app.logger.exception("CN-KH job %s failed", job_id)
+        update_job(job_id, status="failed", progress=0,
+                   message="ដំណើរការមិនបានសម្រេច។",
+                   error=str(exc))
     finally:
-        if temp_vid_path and os.path.exists(temp_vid_path):
+        try:
+            os.remove(video_path)
+        except OSError:
+            pass
+        if uploaded:
             try:
-                os.unlink(temp_vid_path)
-            except OSError:
-                pass
-        if uploaded_file and client:
-            try:
-                client.files.delete(name=uploaded_file.name)
+                client.files.delete(name=uploaded.name)
             except Exception:
                 app.logger.warning("Could not delete temporary Gemini upload")
 
+@app.get("/")
+def home():
+    return render_template("index.html")
+
+@app.get("/health")
+def health():
+    return jsonify({"status": "online", "app": "CN-KH AI", "time": datetime.now(timezone.utc).isoformat()})
+
+@app.post("/api/jobs")
+def create_job():
+    video = request.files.get("video")
+    api_key = (request.form.get("api_key") or "").strip()
+    source_language = request.form.get("source_language", "auto")
+    if not api_key:
+        return jsonify({"error": "សូមបញ្ចូល Gemini API Key ជាមុន។"}), 400
+    if not video or not video.filename:
+        return jsonify({"error": "សូមជ្រើសរើសវីដេអូជាមុន។"}), 400
+    ext = Path(video.filename).suffix.lower()
+    if ext not in {".mp4", ".mov", ".m4v", ".webm", ".mpeg", ".mpg"}:
+        return jsonify({"error": "សូមប្រើឯកសារវីដេអូ MP4, MOV ឬ WEBM។"}), 415
+    job_id = str(uuid.uuid4())
+    fd, path = tempfile.mkstemp(suffix=ext)
+    os.close(fd)
+    video.save(path)
+    with LOCK:
+        JOBS[job_id] = {"status": "queued", "progress": 5, "message": "ទទួលបានវីដេអូហើយ...", "created_at": datetime.now(timezone.utc).isoformat()}
+    thread = threading.Thread(target=process_video, args=(job_id, path, api_key, source_language), daemon=True)
+    thread.start()
+    return jsonify({"job_id": job_id}), 202
+
+@app.get("/api/jobs/<job_id>")
+def job_status(job_id):
+    with LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "រកមិនឃើញការងារនេះទេ។"}), 404
+        return jsonify(job)
+
+@app.get("/api/jobs/<job_id>/audio")
+def job_audio(job_id):
+    path = OUTPUT_DIR / f"{job_id}.mp3"
+    if not path.exists():
+        return jsonify({"error": "សំឡេងមិនទាន់រួចរាល់ ឬផុតកំណត់។"}), 404
+    return send_file(path, mimetype="audio/mpeg", as_attachment=True, download_name="CN-KH-AI-Khmer.mp3")
+
+@app.post("/api/translate-text")
+def translate_text():
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    api_key = (data.get("api_key") or "").strip()
+    if not api_key or not text:
+        return jsonify({"error": "សូមបញ្ចូល Gemini API Key និងអត្ថបទចិន។"}), 400
+    try:
+        client = genai.Client(api_key=api_key)
+        result = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"Translate the following text into natural Khmer. Return only the Khmer translation:\n\n{text}"
+        )
+        return jsonify({"translation": result.text or ""})
+    except Exception as exc:
+        app.logger.exception("Text translation failed")
+        return jsonify({"error": str(exc)}), 500
+
 @app.errorhandler(413)
-def file_too_large(_error):
-    return jsonify({
-        "success": False,
-        "error": "វីដេអូធំពេក។ សូមជ្រើសរើសវីដេអូតូចជាង 100 MB។"
-    }), 413
+def too_large(_):
+    return jsonify({"error": "វីដេអូធំពេក។ អតិបរមា 100 MB។"}), 413
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
