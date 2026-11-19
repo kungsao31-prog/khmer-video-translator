@@ -1,4 +1,4 @@
-import os, re, tempfile, threading, uuid, logging
+import os, re, tempfile, threading, uuid, logging, time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +27,26 @@ def update_job(job_id, **values):
     with LOCK:
         if job_id in JOBS:
             JOBS[job_id].update(values)
+
+def generate_with_retry(client, *, model, contents, on_retry=None):
+    """Retry temporary Gemini capacity and rate-limit errors."""
+    delays = (2, 4, 8, 16)
+    for attempt in range(len(delays) + 1):
+        try:
+            return client.models.generate_content(model=model, contents=contents)
+        except Exception as exc:
+            message = str(exc).lower()
+            temporary = any(token in message for token in (
+                "503", "unavailable", "high demand", "429", "resource_exhausted",
+                "500", "502", "504", "internal error", "temporarily"
+            ))
+            if not temporary or attempt >= len(delays):
+                raise
+            wait_seconds = delays[attempt]
+            if on_retry:
+                on_retry(attempt + 1, len(delays), wait_seconds)
+            time.sleep(wait_seconds)
+
 
 def srt_to_text(srt):
     lines = []
@@ -67,9 +87,12 @@ def process_video(job_id, video_path, api_key, source_language):
             "HH:MM:SS,mmm timestamps. Keep each subtitle concise and preserve meaning. "
             "Do not include markdown fences or explanations."
         )
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[uploaded, prompt]
+        response = generate_with_retry(
+            client, model=GEMINI_MODEL, contents=[uploaded, prompt],
+            on_retry=lambda attempt, total, wait: update_job(
+                job_id, progress=42,
+                message=f"AI កំពុងមមាញឹក។ កម្មវិធីនឹងសាកល្បងម្ដងទៀត ({attempt}/{total})..."
+            )
         )
         srt = (response.text or "").strip()
         if not srt:
@@ -155,8 +178,8 @@ def translate_text():
         return jsonify({"error": "សូមបញ្ចូល Gemini API Key និងអត្ថបទចិន។"}), 400
     try:
         client = genai.Client(api_key=api_key)
-        result = client.models.generate_content(
-            model=GEMINI_MODEL,
+        result = generate_with_retry(
+            client, model=GEMINI_MODEL,
             contents=f"Translate the following text into natural Khmer. Return only the Khmer translation:\n\n{text}"
         )
         return jsonify({"translation": result.text or ""})
