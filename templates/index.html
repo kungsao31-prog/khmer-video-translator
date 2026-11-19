@@ -78,7 +78,8 @@ async function loadKiriVoices(){
 }
 $("refreshVoices").addEventListener("click",loadKiriVoices);
 loadKiriVoices();
-$("video").addEventListener("change",()=>{const f=$("video").files[0];$("fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 500 MB";});
+$("#video").addEventListener("change",()=>{const f=$("#video").files[0];$("#fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"ជ្រើសរើសវីដេអូពី Gallery/Files ក្នុងទូរសព្ទ · MP4, MOV, WEBM · អតិបរមា 500 MB";if(f){if($("#apiKey").value.trim()){progress(0,"បានជ្រើសរើសវីដេអូពីទូរសព្ទ។ ចាប់ផ្តើមបកប្រែស្វ័យប្រវត្តិ...");$("#start").click();}else{progress(0,"បានជ្រើសរើសវីដេអូហើយ។ សូមបញ្ចូល Gemini API Key រួចចុចចាប់ផ្តើមបកប្រែ។");}}});
+$("#apiKey").addEventListener("change",()=>{if($("#video").files[0]&&$("#apiKey").value.trim()&&!$("#start").disabled){progress(0,"បានបញ្ចូល API Key។ ចាប់ផ្តើមបកប្រែវីដេអូស្វ័យប្រវត្តិ...");$("#start").click();}});
 function progress(n,msg,cls=""){ $("bar").style.width=Math.max(0,Math.min(100,n))+"%";$("status").textContent=msg;$("status").className="status "+cls; }
 $("start").addEventListener("click",()=>{
  const file=$("video").files[0],key=$("apiKey").value.trim();
