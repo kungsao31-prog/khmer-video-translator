@@ -1,10 +1,9 @@
-import os, re, tempfile, threading, uuid, logging, time, json, subprocess, shutil, asyncio
+import os, re, tempfile, threading, uuid, logging, time, json, subprocess, shutil, urllib.request, urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, request, jsonify, send_file, render_template
 from google import genai
-import edge_tts
 from PIL import ImageFont
 
 app = Flask(__name__)
@@ -95,13 +94,64 @@ def normalize_dialogue(raw):
         raise RuntimeError("AI មិនបានសម្គាល់សន្ទនាតួអង្គសម្រាប់បង្កើតសំឡេងខ្មែរទេ។")
     return segments
 
-def synthesize_character_audio(job_id, segments, video_duration):
+
+def kiri_request(path, payload=None, timeout=180):
+    api_key = os.environ.get("KIRI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("សូមកំណត់ KIRI_API_KEY ក្នុង Render Environment ជាមុនសិន។")
+    data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"https://api.kiritts.com/v1{path}", data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return response.read(), response.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:1200]
+        if exc.code == 401:
+            raise RuntimeError("Kiri API Key មិនត្រឹមត្រូវ។ សូមពិនិត្យ KIRI_API_KEY ក្នុង Render។") from exc
+        if exc.code == 403:
+            raise RuntimeError("គណនី Kiri មិនទាន់មានសិទ្ធិ API ឬសំឡេងក្លូននេះមិនមែនជារបស់គណនីនេះទេ។") from exc
+        if exc.code == 429:
+            raise RuntimeError("Kiri បានដល់កម្រិតប្រើប្រាស់ ឬកំពុងកំណត់ល្បឿន។ សូមពិនិត្យ Credits/Plan របស់ Kiri។") from exc
+        raise RuntimeError(f"Kiri TTS API បរាជ័យ ({exc.code}): {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError("មិនអាចភ្ជាប់ទៅ Kiri TTS បានទេ។ សូមពិនិត្យអ៊ីនធឺណិតរបស់ Render។") from exc
+
+def available_kiri_voices():
+    combined = []
+    for endpoint in ("/voices", "/audio/voice-clones"):
+        try:
+            raw, _ = kiri_request(endpoint, timeout=45)
+            data = json.loads(raw.decode("utf-8"))
+            items = data if isinstance(data, list) else data.get("voices", data.get("data", data.get("items", [])))
+            if isinstance(items, list):
+                combined.extend(items)
+        except Exception as exc:
+            app.logger.warning("Kiri voice list %s unavailable: %s", endpoint, exc)
+    cleaned, seen = [], set()
+    for item in combined:
+        if isinstance(item, str):
+            name, gender, cloned = item, "", False
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("voice") or item.get("voice_id") or item.get("id") or "").strip()
+            gender = str(item.get("gender") or item.get("voice_gender") or "").lower()
+            cloned = bool(item.get("cloned") or item.get("is_cloned"))
+        else:
+            continue
+        if name and name not in seen:
+            seen.add(name)
+            cleaned.append({"name": name, "gender": gender, "cloned": cloned})
+    return cleaned
+
+def synthesize_character_audio(job_id, segments, video_duration, male_voice='Chanda', female_voice='Maly'):
     """Create natural Khmer neural speech, assigning one consistent voice per speaker."""
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if not ffmpeg or not ffprobe:
         raise RuntimeError("Render មិនទាន់មាន FFmpeg ទេ។")
-    voices = {"male": "km-KH-PisethNeural", "female": "km-KH-SreymomNeural"}
+    voices = {"male": male_voice or "Chanda", "female": female_voice or "Maly"}
     speaker_voices = {}
     clips = []
     for index, segment in enumerate(segments):
@@ -110,13 +160,17 @@ def synthesize_character_audio(job_id, segments, video_duration):
         speaker_voices.setdefault(speaker, voices[gender])
         voice = speaker_voices[speaker]
         clip = OUTPUT_DIR / f"{job_id}-voice-{index}.mp3"
-        async def save_speech(text, voice_name, output):
-            communicate = edge_tts.Communicate(text=text, voice=voice_name, rate="+5%", volume="+0%", pitch="+0Hz")
-            await communicate.save(str(output))
         try:
-            asyncio.run(save_speech(segment["khmer"], voice, clip))
+            audio_bytes, content_type = kiri_request("/audio/speech", {
+                "model": "kiritts", "input": segment["khmer"], "voice": voice,
+                "response_format": "mp3", "speed": 1.0,
+                "instructions": "Speak natural Cambodian Khmer with clear pronunciation and conversational emotion."
+            }, timeout=240)
+            if not audio_bytes or ("json" in content_type and audio_bytes[:1] in (b"{", b"[")):
+                raise RuntimeError(audio_bytes[:1000].decode("utf-8", errors="replace"))
+            clip.write_bytes(audio_bytes)
         except Exception as exc:
-            raise RuntimeError("មិនអាចភ្ជាប់សេវាសំឡេងខ្មែរធម្មជាតិបានទេ។ សូមពិនិត្យអ៊ីនធឺណិតរបស់ Server រួចសាកល្បងម្ដងទៀត។") from exc
+            raise RuntimeError(f"Kiri មិនអាចបង្កើតសំឡេង {voice} បានទេ៖ {exc}") from exc
         if clip.exists() and clip.stat().st_size > 0:
             clips.append((clip, segment["start"]))
     if not clips:
@@ -277,7 +331,7 @@ def render_translated_video(job_id, video_path, audio_path, ocr_items):
                 pass
     return output_path, len(ocr_items)
 
-def process_video(job_id, video_path, api_key, source_language):
+def process_video(job_id, video_path, api_key, source_language, male_voice, female_voice):
     uploaded = None
     client = genai.Client(api_key=api_key)
     try:
@@ -326,7 +380,7 @@ def process_video(job_id, video_path, api_key, source_language):
                                 "-show_entries", "format=duration", "-of", "default=nw=1:nk=1",
                                 video_path], capture_output=True, text=True, check=True)
         video_duration = float(probe.stdout.strip())
-        audio_path = synthesize_character_audio(job_id, dialogue, video_duration)
+        audio_path = synthesize_character_audio(job_id, dialogue, video_duration, male_voice, female_voice)
 
         update_job(job_id, progress=82, message="កំពុងបិទសំឡេងចិនដើម បិទអក្សរចិន ដាក់អក្សរខ្មែរ និងបញ្ចូលសំឡេងតួអង្គ...")
         video_out, replaced_count = render_translated_video(job_id, video_path, audio_path, ocr_items)
@@ -358,6 +412,16 @@ def process_video(job_id, video_path, api_key, source_language):
 def home():
     return render_template("index.html")
 
+@app.get("/api/voices")
+def api_voices():
+    try:
+        voices = available_kiri_voices()
+        if not voices:
+            return jsonify({"error": "មិនអាចទាញយកបញ្ជីសំឡេងពី Kiri បានទេ។ សូមពិនិត្យ KIRI_API_KEY និងសិទ្ធិ API។"}), 502
+        return jsonify({"voices": voices})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
 @app.get("/health")
 def health():
     return jsonify({"status": "online", "app": "CN-KH AI", "model": GEMINI_MODEL, "video_export": "enabled", "time": datetime.now(timezone.utc).isoformat()})
@@ -367,6 +431,8 @@ def create_job():
     video = request.files.get("video")
     api_key = (request.form.get("api_key") or "").strip()
     source_language = request.form.get("source_language", "auto")
+    male_voice = request.form.get("male_voice", "Chanda").strip() or "Chanda"
+    female_voice = request.form.get("female_voice", "Maly").strip() or "Maly"
     if not api_key:
         return jsonify({"error": "សូមបញ្ចូល Gemini API Key ជាមុន។"}), 400
     if not video or not video.filename:
@@ -380,7 +446,7 @@ def create_job():
     video.save(path)
     with LOCK:
         JOBS[job_id] = {"status": "queued", "progress": 5, "message": "ទទួលបានវីដេអូហើយ...", "created_at": datetime.now(timezone.utc).isoformat()}
-    thread = threading.Thread(target=process_video, args=(job_id, path, api_key, source_language), daemon=True)
+    thread = threading.Thread(target=process_video, args=(job_id, path, api_key, source_language, male_voice, female_voice), daemon=True)
     thread.start()
     return jsonify({"job_id": job_id}), 202
 
