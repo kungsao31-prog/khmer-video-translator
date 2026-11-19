@@ -77,8 +77,8 @@ async function loadKiriVoices(){
 }
 $("refreshVoices").addEventListener("click",loadKiriVoices);
 loadKiriVoices();
-$("#video").addEventListener("change",()=>{const f=$("#video").files[0];$("#fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"ជ្រើសរើសវីដេអូពី Gallery/Files ក្នុងទូរសព្ទ · MP4, MOV, WEBM · អតិបរមា 500 MB";if(f){if($("#apiKey").value.trim()){progress(0,"បានជ្រើសរើសវីដេអូពីទូរសព្ទ។ ចាប់ផ្តើមបកប្រែស្វ័យប្រវត្តិ...");$("#start").click();}else{progress(0,"បានជ្រើសរើសវីដេអូហើយ។ សូមបញ្ចូល Gemini API Key រួចចុចចាប់ផ្តើមបកប្រែ។");}}});
-$("#apiKey").addEventListener("change",()=>{if($("#video").files[0]&&$("#apiKey").value.trim()&&!$("#start").disabled){progress(0,"បានបញ្ចូល API Key។ ចាប់ផ្តើមបកប្រែវីដេអូស្វ័យប្រវត្តិ...");$("#start").click();}});
+$("video").addEventListener("change",()=>{const f=$("video").files[0];$("fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"ជ្រើសរើសវីដេអូពី Gallery/Files ក្នុងទូរសព្ទ · MP4, MOV, WEBM · អតិបរមា 500 MB";if(f){if($("apiKey").value.trim()){progress(0,"បានជ្រើសរើសវីដេអូពីទូរសព្ទ។ ចាប់ផ្តើមបកប្រែស្វ័យប្រវត្តិ...");$("start").click();}else{progress(0,"បានជ្រើសរើសវីដេអូហើយ។ សូមបញ្ចូល Gemini API Key រួចចុចចាប់ផ្តើមបកប្រែ។");}}});
+$("apiKey").addEventListener("change",()=>{if($("video").files[0]&&$("apiKey").value.trim()&&!$("start").disabled){progress(0,"បានបញ្ចូល API Key។ ចាប់ផ្តើមបកប្រែវីដេអូស្វ័យប្រវត្តិ...");$("start").click();}});
 function progress(n,msg,cls=""){ $("bar").style.width=Math.max(0,Math.min(100,n))+"%";$("status").textContent=msg;$("status").className="status "+cls; }
 $("start").addEventListener("click",()=>{
  const file=$("video").files[0],key=$("apiKey").value.trim();
@@ -86,7 +86,7 @@ $("start").addEventListener("click",()=>{
  if(!key){progress(0,"សូមបញ្ចូល Gemini API Key ជាមុន។","error");return;}
  if(file.size>500*1024*1024){progress(0,"វីដេអូធំពេក។ អតិបរមា 500 MB។","error");return;}
  if(pollTimer)clearInterval(pollTimer);
- $("start").disabled=true;$("result").textContent="កំពុងផ្ញើវីដេអូទៅ Server...";$("player").hidden=true;$("download").hidden=true;$("videoDownload").hidden=true;
+ $("start").disabled=true;$("result").textContent="កំពុងផ្ញើវីដេអូទៅ Server...";$("videoPlayer").hidden=true;$("videoDownload").hidden=true;$("videoDownload").hidden=true;
  const data=new FormData();data.append("video",file);data.append("api_key",key);data.append("source_language",$("language").value);data.append("male_voice",$("maleVoice").value);data.append("female_voice",$("femaleVoice").value);
  const xhr=new XMLHttpRequest();xhr.open("POST","/api/jobs");
  xhr.upload.onprogress=e=>{if(e.lengthComputable)progress(Math.round(e.loaded/e.total*20),"កំពុងផ្ញើវីដេអូ... "+Math.round(e.loaded/e.total*100)+"%");};
