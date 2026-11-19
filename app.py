@@ -125,7 +125,14 @@ def available_kiri_voices():
         try:
             raw, _ = kiri_request(endpoint, timeout=45)
             data = json.loads(raw.decode("utf-8"))
-            items = data if isinstance(data, list) else data.get("voices", data.get("data", data.get("items", [])))
+            if isinstance(data, list):
+                items = data
+            elif isinstance(data, dict):
+                items = data.get("voices") or data.get("data") or data.get("items") or []
+                if isinstance(items, dict):
+                    items = items.get("data") or items.get("voices") or []
+            else:
+                items = []
             if isinstance(items, list):
                 combined.extend(items)
         except Exception as exc:
