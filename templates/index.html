@@ -63,8 +63,9 @@ const $=id=>document.getElementById(id);
 let pollTimer=null;
 async function loadKiriVoices(){
  try{
-  const r=await fetch("/api/voices");const d=await r.json();
-  if(!r.ok)throw new Error(d.error||"មិនអាចទាញយកបញ្ជីសំឡេងបានទេ");
+  $("voiceInfo").textContent="កំពុងភ្ជាប់ទៅ Kiri TTS...";
+  const r=await fetch("/api/kiri/status");const d=await r.json();
+  if(!r.ok||!d.connected)throw new Error(d.error||"មិនអាចភ្ជាប់ Kiri បានទេ");
   const voices=d.voices||[];
   for(const id of ["maleVoice","femaleVoice"]){
    const select=$(id), previous=select.value;
@@ -72,7 +73,7 @@ async function loadKiriVoices(){
    voices.forEach(v=>{const o=document.createElement("option");o.value=v.name;o.textContent=v.name+(v.cloned?" · សំឡេងក្លូន":"");select.appendChild(o);});
    if([...select.options].some(o=>o.value===previous))select.value=previous;
   }
-  $("voiceInfo").textContent="បានទាញយកសំឡេង Kiri "+voices.length+" សំឡេង រួមទាំងសំឡេងក្លូនដែលមានសិទ្ធិប្រើ។";
+  $("voiceInfo").textContent="បានភ្ជាប់ Kiri · សំឡេង "+voices.length+" · សំឡេងក្លូន "+(d.cloned_voice_count||0)+". បង្កើតក្លូនក្នុងគណនី Kiri រួចចុចផ្ទុកឡើងវិញ។";
  }catch(e){$("voiceInfo").textContent="មិនអាចផ្ទុកបញ្ជីសំឡេង Kiri បានទេ។ អាចប្រើ Chanda និង Maly ជាលំនាំដើម។ "+e.message;}
 }
 $("refreshVoices").addEventListener("click",loadKiriVoices);
