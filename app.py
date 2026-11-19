@@ -8,7 +8,7 @@ import edge_tts
 from PIL import ImageFont
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
 app.config["JSON_AS_ASCII"] = False
 logging.basicConfig(level=logging.INFO)
 
@@ -69,9 +69,9 @@ def dialogue_to_srt(segments):
     blocks = []
     for i, item in enumerate(segments, 1):
         blocks.append(
-            f"{i}\\n{seconds_to_srt_time(item['start'])} --> {seconds_to_srt_time(item['end'])}\\n{item['khmer']}"
+            f"{i}\n{seconds_to_srt_time(item['start'])} --> {seconds_to_srt_time(item['end'])}\n{item['khmer']}"
         )
-    return "\\n\\n".join(blocks)
+    return "\n\n".join(blocks)
 
 def normalize_dialogue(raw):
     data = parse_json_response(raw)
@@ -149,13 +149,13 @@ def synthesize_character_audio(job_id, segments, video_duration):
 
 def parse_json_response(raw):
     raw = (raw or "").strip()
-    raw = re.sub(r"^\`\`\`(?:json)?\s*|\s*\`\`\`$", "", raw, flags=re.I)
+    raw = raw.replace("\x60\x60\x60json", "").replace("\x60\x60\x60", "").strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", raw, flags=re.S)
         if not match:
-            raise RuntimeError("AI មិនបានផ្តល់ទិន្នន័យ OCR ត្រឹមត្រូវទេ។")
+            raise RuntimeError("AI មិនបានផ្តល់ទិន្នន័យ JSON ត្រឹមត្រូវទេ។")
         return json.loads(match.group(0))
 
 def detect_chinese_screen_text(client, uploaded, on_retry):
@@ -335,7 +335,9 @@ def process_video(job_id, video_path, api_key, source_language):
                    translation_result=srt, transcript=transcript,
                    audio_url=f"/api/jobs/{job_id}/audio",
                    video_url=f"/api/jobs/{job_id}/video",
-                   replaced_text_count=replaced_count,\n                   speaker_count=len(set(item["speaker_id"] for item in dialogue)),\n                   voice_style="Khmer neural female/male voices", original_audio_removed=True)
+                   replaced_text_count=replaced_count,
+                   speaker_count=len(set(item["speaker_id"] for item in dialogue)),
+                   voice_style="Khmer neural female/male voices", original_audio_removed=True)
     except Exception as exc:
         app.logger.exception("CN-KH job %s failed", job_id)
         update_job(job_id, status="failed", progress=0,
