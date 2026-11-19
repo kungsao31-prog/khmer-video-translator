@@ -306,9 +306,9 @@ def process_video(job_id, video_path, api_key, source_language):
             "speaker's perceived voice gender from the AUDIO only (female or male); do not guess from "
             "appearance. Translate every turn into natural, conversational Cambodian Khmer, preserving "
             "meaning, emotion, and character intent. Keep the original timing accurate. "
-            "Return ONLY JSON in this exact shape: {\\"segments\\":[{\\"start\\":0.5,\\"end\\":3.8,"
-            "\\"speaker_id\\":\\"speaker_1\\",\\"voice_gender\\":\\"female\\","
-            "\\"khmer\\":\\"អត្ថបទខ្មែរ\\"}]}. "
+            "Return ONLY JSON in this exact shape: {\"segments\":[{\"start\":0.5,\"end\":3.8,"
+            "\"speaker_id\":\"speaker_1\",\"voice_gender\":\"female\","
+            "\"khmer\":\"អត្ថបទខ្មែរ\"}]}. "
             "Use seconds as numeric timestamps. One item per spoken turn. No markdown or commentary."
         )
         response = generate_with_retry(
