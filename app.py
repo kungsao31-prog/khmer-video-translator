@@ -419,6 +419,18 @@ def process_video(job_id, video_path, api_key, source_language, male_voice, fema
 def home():
     return render_template("index.html")
 
+@app.get("/api/kiri/status")
+def kiri_status():
+    try:
+        voices = available_kiri_voices()
+        if not voices:
+            return jsonify({"connected": False, "error": "Kiri API មិនបានផ្តល់បញ្ជីសំឡេងទេ។ សូមពិនិត្យ API Key និងសិទ្ធិ API។"}), 502
+        return jsonify({"connected": True, "voice_count": len(voices),
+                        "cloned_voice_count": sum(1 for voice in voices if voice.get("cloned")),
+                        "voices": voices})
+    except Exception as exc:
+        return jsonify({"connected": False, "error": str(exc)}), 502
+
 @app.get("/api/voices")
 def api_voices():
     try:
