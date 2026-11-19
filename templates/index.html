@@ -29,6 +29,11 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26364d}.pro
 <p class="hint">API Key ត្រូវបានប្រើសម្រាប់សំណើបកប្រែប៉ុណ្ណោះ។ កុំចែករំលែក Key ជាមួយអ្នកដទៃ។</p>
 <label for="language">ភាសាដើម</label>
 <select class="field" id="language"><option value="zh">ចិន (Chinese)</option><option value="auto">ស្វ័យប្រវត្តិ</option><option value="en">អង់គ្លេស</option><option value="th">ថៃ</option><option value="ko">កូរ៉េ</option><option value="ja">ជប៉ុន</option><option value="vi">វៀតណាម</option></select>
+<div class="row">
+<div><label for="maleVoice">សំឡេងតួអង្គប្រុស</label><select class="field" id="maleVoice"><option>Chanda</option><option>Bora</option><option>Arun</option><option>Maly</option></select></div>
+<div><label for="femaleVoice">សំឡេងតួអង្គស្រី</label><select class="field" id="femaleVoice"><option>Maly</option><option>Chanda</option><option>Bora</option><option>Arun</option></select></div>
+</div>
+<p class="hint" id="voiceInfo">កំពុងទាញយកបញ្ជីសំឡេង Kiri...</p>
 <button id="start">🚀 ៣. ចាប់ផ្តើមបកប្រែវីដេអូ</button>
 <div class="progress"><div class="bar" id="bar"></div></div><div class="status" id="status">រង់ចាំជ្រើសរើសវីដេអូ...</div>
 </section>
@@ -51,6 +56,21 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26364d}.pro
 <script>
 const $=id=>document.getElementById(id);
 let pollTimer=null;
+async function loadKiriVoices(){
+ try{
+  const r=await fetch("/api/voices");const d=await r.json();
+  if(!r.ok)throw new Error(d.error||"មិនអាចទាញយកបញ្ជីសំឡេងបានទេ");
+  const voices=d.voices||[];
+  for(const id of ["maleVoice","femaleVoice"]){
+   const select=$(id), previous=select.value;
+   select.innerHTML="";
+   voices.forEach(v=>{const o=document.createElement("option");o.value=v.name;o.textContent=v.name+(v.cloned?" · សំឡេងក្លូន":"");select.appendChild(o);});
+   if([...select.options].some(o=>o.value===previous))select.value=previous;
+  }
+  $("voiceInfo").textContent="បានទាញយកសំឡេង Kiri "+voices.length+" សំឡេង រួមទាំងសំឡេងក្លូនដែលមានសិទ្ធិប្រើ។";
+ }catch(e){$("voiceInfo").textContent="មិនអាចផ្ទុកបញ្ជីសំឡេង Kiri បានទេ។ អាចប្រើ Chanda និង Maly ជាលំនាំដើម។ "+e.message;}
+}
+loadKiriVoices();
 $("video").addEventListener("change",()=>{const f=$("video").files[0];$("fileInfo").textContent=f?f.name+" · "+(f.size/1024/1024).toFixed(2)+" MB":"គាំទ្រ MP4, MOV និង WEBM · ទំហំអតិបរមា 500 MB";});
 function progress(n,msg,cls=""){ $("bar").style.width=Math.max(0,Math.min(100,n))+"%";$("status").textContent=msg;$("status").className="status "+cls; }
 $("start").addEventListener("click",()=>{
@@ -60,7 +80,7 @@ $("start").addEventListener("click",()=>{
  if(file.size>500*1024*1024){progress(0,"វីដេអូធំពេក។ អតិបរមា 500 MB។","error");return;}
  if(pollTimer)clearInterval(pollTimer);
  $("start").disabled=true;$("result").textContent="កំពុងផ្ញើវីដេអូទៅ Server...";$("player").hidden=true;$("download").hidden=true;$("videoDownload").hidden=true;
- const data=new FormData();data.append("video",file);data.append("api_key",key);data.append("source_language",$("language").value);
+ const data=new FormData();data.append("video",file);data.append("api_key",key);data.append("source_language",$("language").value);data.append("male_voice",$("maleVoice").value);data.append("female_voice",$("femaleVoice").value);
  const xhr=new XMLHttpRequest();xhr.open("POST","/api/jobs");
  xhr.upload.onprogress=e=>{if(e.lengthComputable)progress(Math.round(e.loaded/e.total*20),"កំពុងផ្ញើវីដេអូ... "+Math.round(e.loaded/e.total*100)+"%");};
  xhr.onload=()=>{let d={};try{d=JSON.parse(xhr.responseText)}catch(e){}
