@@ -1,10 +1,10 @@
-import os, re, tempfile, threading, uuid, logging, time, json, subprocess, shutil
+import os, re, tempfile, threading, uuid, logging, time, json, subprocess, shutil, asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, request, jsonify, send_file, render_template
 from google import genai
-from gtts import gTTS
+import edge_tts
 from PIL import ImageFont
 
 app = Flask(__name__)
@@ -57,6 +57,95 @@ def srt_to_text(srt):
             continue
         lines.append(value)
     return " ".join(lines).strip()
+
+def seconds_to_srt_time(value):
+    millis = max(0, int(round(float(value) * 1000)))
+    hours, millis = divmod(millis, 3600000)
+    minutes, millis = divmod(millis, 60000)
+    seconds, millis = divmod(millis, 1000)
+    return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
+
+def dialogue_to_srt(segments):
+    blocks = []
+    for i, item in enumerate(segments, 1):
+        blocks.append(
+            f"{i}\\n{seconds_to_srt_time(item['start'])} --> {seconds_to_srt_time(item['end'])}\\n{item['khmer']}"
+        )
+    return "\\n\\n".join(blocks)
+
+def normalize_dialogue(raw):
+    data = parse_json_response(raw)
+    source = data.get("segments", []) if isinstance(data, dict) else []
+    segments = []
+    for item in source[:300]:
+        try:
+            start = max(0.0, float(item["start"]))
+            end = max(start + 0.25, float(item["end"]))
+            text = str(item.get("khmer", item.get("translation", ""))).strip()
+            speaker = str(item.get("speaker_id", item.get("speaker", "speaker_1"))).strip() or "speaker_1"
+            gender = str(item.get("voice_gender", item.get("gender", "male"))).lower()
+            gender = "female" if gender in ("female", "woman", "ស្រី") else "male"
+            if text:
+                segments.append({"start": start, "end": end, "khmer": text[:500],
+                                 "speaker_id": speaker[:40], "voice_gender": gender})
+        except (KeyError, TypeError, ValueError):
+            continue
+    segments.sort(key=lambda x: x["start"])
+    if not segments:
+        raise RuntimeError("AI មិនបានសម្គាល់សន្ទនាតួអង្គសម្រាប់បង្កើតសំឡេងខ្មែរទេ។")
+    return segments
+
+def synthesize_character_audio(job_id, segments, video_duration):
+    """Create natural Khmer neural speech, assigning one consistent voice per speaker."""
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        raise RuntimeError("Render មិនទាន់មាន FFmpeg ទេ។")
+    voices = {"male": "km-KH-PisethNeural", "female": "km-KH-SreymomNeural"}
+    speaker_voices = {}
+    clips = []
+    for index, segment in enumerate(segments):
+        gender = segment["voice_gender"]
+        speaker = segment["speaker_id"]
+        speaker_voices.setdefault(speaker, voices[gender])
+        voice = speaker_voices[speaker]
+        clip = OUTPUT_DIR / f"{job_id}-voice-{index}.mp3"
+        async def save_speech(text, voice_name, output):
+            communicate = edge_tts.Communicate(text=text, voice=voice_name, rate="+5%", volume="+0%", pitch="+0Hz")
+            await communicate.save(str(output))
+        try:
+            asyncio.run(save_speech(segment["khmer"], voice, clip))
+        except Exception as exc:
+            raise RuntimeError("មិនអាចភ្ជាប់សេវាសំឡេងខ្មែរធម្មជាតិបានទេ។ សូមពិនិត្យអ៊ីនធឺណិតរបស់ Server រួចសាកល្បងម្ដងទៀត។") from exc
+        if clip.exists() and clip.stat().st_size > 0:
+            clips.append((clip, segment["start"]))
+    if not clips:
+        raise RuntimeError("មិនអាចបង្កើតសំឡេងតួអង្គបានទេ។")
+    command = [ffmpeg, "-y"]
+    for clip, _ in clips:
+        command += ["-i", str(clip)]
+    filters = []
+    labels = []
+    for index, (_, start) in enumerate(clips):
+        delay = max(0, int(start * 1000))
+        filters.append(f"[{index}:a]adelay={delay}|{delay}[v{index}]")
+        labels.append(f"[v{index}]")
+    filters.append("".join(labels) + f"amix=inputs={len(clips)}:duration=longest:normalize=0,alimiter=limit=0.95[aout]")
+    output = OUTPUT_DIR / f"{job_id}.mp3"
+    command += ["-filter_complex", ";".join(filters), "-map", "[aout]",
+                "-t", f"{video_duration:.3f}", "-c:a", "libmp3lame", "-b:a", "160k", str(output)]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=max(300, int(video_duration * 3)))
+        if result.returncode != 0:
+            app.logger.error("Voice mix failed: %s", result.stderr[-4000:])
+            raise RuntimeError("មិនអាចបញ្ចូលសំឡេងតួអង្គបានទេ។")
+    finally:
+        for clip, _ in clips:
+            try:
+                clip.unlink()
+            except OSError:
+                pass
+    return output
 
 def parse_json_response(raw):
     raw = (raw or "").strip()
@@ -211,37 +300,42 @@ def process_video(job_id, video_path, api_key, source_language):
         source = LANGUAGES.get(source_language, LANGUAGES["auto"])
         update_job(job_id, progress=36, message="កំពុងស្តាប់ និងបកប្រែសំឡេងទៅជាអក្សរខ្មែរ...")
         prompt = (
-            f"Listen to the spoken dialogue in this video. The source language is {source}. "
-            "Transcribe and translate every spoken line into natural, faithful Khmer. "
-            "Return ONLY valid SRT subtitles, with sequential numbers and accurate "
-            "HH:MM:SS,mmm timestamps. Keep each subtitle concise and preserve meaning. "
-            "Do not include markdown fences or explanations."
+            f"Listen carefully to all spoken dialogue in this video. The source language is {source}. "
+            "Perform speaker diarization: assign a stable speaker_id to each distinct audible person "
+            "and keep that ID consistent throughout the video. For each spoken turn, identify the "
+            "speaker's perceived voice gender from the AUDIO only (female or male); do not guess from "
+            "appearance. Translate every turn into natural, conversational Cambodian Khmer, preserving "
+            "meaning, emotion, and character intent. Keep the original timing accurate. "
+            "Return ONLY JSON in this exact shape: {\\"segments\\":[{\\"start\\":0.5,\\"end\\":3.8,"
+            "\\"speaker_id\\":\\"speaker_1\\",\\"voice_gender\\":\\"female\\","
+            "\\"khmer\\":\\"អត្ថបទខ្មែរ\\"}]}. "
+            "Use seconds as numeric timestamps. One item per spoken turn. No markdown or commentary."
         )
         response = generate_with_retry(
             client, model=GEMINI_MODEL, contents=[uploaded, prompt],
-            on_retry=lambda a, n, w: retry_message(a, n, w, "កំពុងបកប្រែសំឡេង៖")
+            on_retry=lambda a, n, w: retry_message(a, n, w, "កំពុងបកប្រែ និងសម្គាល់តួអង្គ៖")
         )
-        srt = (response.text or "").strip()
-        if not srt:
-            raise RuntimeError("AI មិនបានផ្តល់អត្ថបទបកប្រែទេ។")
-        transcript = srt_to_text(srt)
-        if not transcript:
-            raise RuntimeError("មិនអាចរកឃើញអត្ថបទបកប្រែសម្រាប់បង្កើតសំឡេងទេ។")
+        dialogue = normalize_dialogue(response.text)
+        srt = dialogue_to_srt(dialogue)
+        transcript = " ".join(item["khmer"] for item in dialogue)
 
         update_job(job_id, progress=55, message="កំពុងស្វែងរកអក្សរចិនដែលបង្ហាញលើផ្ទៃវីដេអូ...")
         ocr_items = detect_chinese_screen_text(client, uploaded, retry_message)
-        update_job(job_id, progress=70, message=f"រកឃើញអក្សរចិន {len(ocr_items)} កន្លែង។ កំពុងបង្កើតសំឡេងខ្មែរ...")
-        audio_path = OUTPUT_DIR / f"{job_id}.mp3"
-        gTTS(text=transcript, lang="km", slow=False).save(str(audio_path))
+        update_job(job_id, progress=70, message=f"រកឃើញអក្សរចិន {len(ocr_items)} កន្លែង។ កំពុងបង្កើតសំឡេងស្រី/ប្រុសខ្មែរ...")
+        probe = subprocess.run([shutil.which("ffprobe") or "ffprobe", "-v", "error",
+                                "-show_entries", "format=duration", "-of", "default=nw=1:nk=1",
+                                video_path], capture_output=True, text=True, check=True)
+        video_duration = float(probe.stdout.strip())
+        audio_path = synthesize_character_audio(job_id, dialogue, video_duration)
 
-        update_job(job_id, progress=82, message="កំពុងបិទអក្សរចិន ដាក់អក្សរខ្មែរ និងបញ្ចូលសំឡេងក្នុង MP4...")
+        update_job(job_id, progress=82, message="កំពុងបិទសំឡេងចិនដើម បិទអក្សរចិន ដាក់អក្សរខ្មែរ និងបញ្ចូលសំឡេងតួអង្គ...")
         video_out, replaced_count = render_translated_video(job_id, video_path, audio_path, ocr_items)
         update_job(job_id, progress=100, status="completed",
                    message=f"បកប្រែរួចរាល់! បានបង្កើត MP4 ថ្មី និងជំនួសអក្សរចិន {replaced_count} កន្លែង។",
                    translation_result=srt, transcript=transcript,
                    audio_url=f"/api/jobs/{job_id}/audio",
                    video_url=f"/api/jobs/{job_id}/video",
-                   replaced_text_count=replaced_count)
+                   replaced_text_count=replaced_count,\n                   speaker_count=len(set(item["speaker_id"] for item in dialogue)),\n                   voice_style="Khmer neural female/male voices", original_audio_removed=True)
     except Exception as exc:
         app.logger.exception("CN-KH job %s failed", job_id)
         update_job(job_id, status="failed", progress=0,
