@@ -37,6 +37,8 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26364d}.pro
 <div class="result" id="result">លទ្ធផលបកប្រែនឹងបង្ហាញនៅទីនេះ...</div>
 <audio id="player" controls hidden></audio>
 <a id="download" class="download" hidden>⬇️ ទាញយកសំឡេងខ្មែរ MP3</a>
+<a id="videoDownload" class="download" hidden style="background:#16845b">🎬 ទាញយកវីដេអូថ្មី MP4 (អក្សរខ្មែរ + សំឡេងខ្មែរ)</a>
+<p class="hint">កម្មវិធីនឹងពិនិត្យអក្សរចិនដែលបង្ហាញលើវីដេអូ បិទដោយផ្ទាំងខ្មៅ និងដាក់អក្សរខ្មែរជំនួស។</p>
 </section>
 <section class="card">
 <h2>📝 ៥. បកប្រែអត្ថបទចិន</h2>
@@ -57,7 +59,7 @@ $("start").addEventListener("click",()=>{
  if(!key){progress(0,"សូមបញ្ចូល Gemini API Key ជាមុន។","error");return;}
  if(file.size>100*1024*1024){progress(0,"វីដេអូធំពេក។ អតិបរមា 100 MB។","error");return;}
  if(pollTimer)clearInterval(pollTimer);
- $("start").disabled=true;$("result").textContent="កំពុងផ្ញើវីដេអូទៅ Server...";$("player").hidden=true;$("download").hidden=true;
+ $("start").disabled=true;$("result").textContent="កំពុងផ្ញើវីដេអូទៅ Server...";$("player").hidden=true;$("download").hidden=true;$("videoDownload").hidden=true;
  const data=new FormData();data.append("video",file);data.append("api_key",key);data.append("source_language",$("language").value);
  const xhr=new XMLHttpRequest();xhr.open("POST","/api/jobs");
  xhr.upload.onprogress=e=>{if(e.lengthComputable)progress(Math.round(e.loaded/e.total*20),"កំពុងផ្ញើវីដេអូ... "+Math.round(e.loaded/e.total*100)+"%");};
@@ -69,7 +71,7 @@ $("start").addEventListener("click",()=>{
  xhr.send(data);
 });
 async function checkJob(id){try{const r=await fetch("/api/jobs/"+id);const d=await r.json();progress(d.progress||0,d.message||"កំពុងដំណើរការ...");
- if(d.status==="completed"){clearInterval(pollTimer);$("start").disabled=false;$("result").textContent=d.translation_result||d.transcript;const url=d.audio_url;$("player").src=url;$("player").hidden=false;$("download").href=url;$("download").hidden=false;progress(100,"បកប្រែរួចរាល់! អាចស្តាប់ ឬទាញយក MP3 បាន។","success");}
+ if(d.status==="completed"){clearInterval(pollTimer);$("start").disabled=false;$("result").textContent=d.translation_result||d.transcript;const url=d.audio_url;$("player").src=url;$("player").hidden=false;$("download").href=url;$("download").hidden=false;$("videoDownload").href=d.video_url||("/api/jobs/"+id+"/video");$("videoDownload").hidden=false;progress(100,d.message||"បកប្រែរួចរាល់!","success");}
  if(d.status==="failed"){clearInterval(pollTimer);$("start").disabled=false;$("result").textContent=d.error||"មានបញ្ហាក្នុងដំណើរការ";progress(0,d.error||"បកប្រែមិនបានជោគជ័យ","error");}
  }catch(e){progress(0,"បាត់ការភ្ជាប់ទៅ Server។ សូមសាកល្បងម្ដងទៀត។","error");clearInterval(pollTimer);$("start").disabled=false;}}
 $("translateText").addEventListener("click",async()=>{const text=$("sourceText").value.trim(),key=$("apiKey").value.trim();if(!text||!key){$("textResult").textContent="សូមបញ្ចូលអត្ថបទចិន និង Gemini API Key។";return;}
